@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -42,12 +43,57 @@ func NewClient(config ClientConfig) *Client {
 	if config.MaxWaitTime == 0 {
 		config.MaxWaitTime = 10 // 默认最多等待10秒
 	}
+	// 如果未指定最低日志级别，默认为 Info
+	if config.MinLevel == 0 {
+		config.MinLevel = pkg.LevelInfo
+	}
 
 	return &Client{
 		config: config,
 		buffer: pkg.NewBuffer(config.BatchSize),
 		done:   make(chan bool),
 	}
+}
+
+// Debug 记录调试级别的日志
+func (c *Client) Debug(message string) error {
+	return c.pushLogWithLevel(message, pkg.LevelDebug)
+}
+
+// Info 记录信息级别的日志
+func (c *Client) Info(message string) error {
+	return c.pushLogWithLevel(message, pkg.LevelInfo)
+}
+
+// Warn 记录警告级别的日志
+func (c *Client) Warn(message string) error {
+	return c.pushLogWithLevel(message, pkg.LevelWarn)
+}
+
+// Error 记录错误级别的日志
+func (c *Client) Error(message string) error {
+	return c.pushLogWithLevel(message, pkg.LevelError)
+}
+
+// pushLogWithLevel 内部方法，处理带级别的日志推送
+func (c *Client) pushLogWithLevel(message string, level pkg.LogLevel) error {
+	// 检查日志级别，低于最小级别的日志直接忽略
+	if level < c.config.MinLevel {
+		return nil
+	}
+
+	// 创建日志条目，使用纳秒级时间戳
+	entry := pkg.LogEntry{
+		Timestamp: time.Now().UnixNano(),
+		Message:   message,
+		Level:     level,
+	}
+
+	// 添加到缓冲区，如果缓冲区已满则触发发送
+	if c.buffer.Add(entry) {
+		c.flush()
+	}
+	return nil
 }
 
 // Start 启动客户端的后台工作协程
@@ -60,27 +106,6 @@ func (c *Client) Start() {
 // 应在程序退出前调用，以确保所有日志都被发送
 func (c *Client) Stop() {
 	c.done <- true
-}
-
-// PushLog 将一条日志消息添加到缓冲区
-// 如果缓冲区达到设定的大小，会触发自动发送
-// 参数：
-//   - message: 要记录的日志消息
-//
-// 返回：
-//   - error: 操作过程中的错误，如果成功则为nil
-func (c *Client) PushLog(message string) error {
-	// 创建日志条目，使用纳秒级时间戳
-	entry := pkg.LogEntry{
-		Timestamp: time.Now().UnixNano(),
-		Message:   message,
-	}
-
-	// 添加到缓冲区，如果缓冲区已满则触发发送
-	if c.buffer.Add(entry) {
-		c.flush()
-	}
-	return nil
 }
 
 // worker 是后台工作协程的主循环
@@ -120,27 +145,42 @@ func (c *Client) flush() {
 		return
 	}
 
-	// 构造日志流，包含标签和日志值
-	stream := Stream{
-		Stream: c.config.Labels,
-		Values: make([][2]string, len(entries)),
-	}
-
-	// 转换日志格式
-	for i, entry := range entries {
-		stream.Values[i] = [2]string{
+	// 按日志级别分组
+	levelGroups := make(map[pkg.LogLevel][][2]string)
+	for _, entry := range entries {
+		levelGroups[entry.Level] = append(levelGroups[entry.Level], [2]string{
 			strconv.FormatInt(entry.Timestamp, 10),
 			entry.Message,
+		})
+	}
+
+	// 为每个级别创建单独的流
+	var streams []Stream
+	for level, values := range levelGroups {
+		// 复制标签并添加级别
+		labels := make(map[string]string)
+		for k, v := range c.config.Labels {
+			labels[k] = v
 		}
+		// 添加日志级别标签
+		labels["detected_level"] = pkg.LevelToString(level)
+
+		streams = append(streams, Stream{
+			Stream: labels,
+			Values: values,
+		})
 	}
 
 	// 创建推送请求
 	req := PushRequest{
-		Streams: []Stream{stream},
+		Streams: streams,
 	}
 
 	// 发送请求到Loki服务器
-	c.send(req)
+	err := c.send(req)
+	if err != nil {
+		log.Println(err.Error())
+	}
 }
 
 // send 负责将日志请求发送到Loki服务器
@@ -163,8 +203,6 @@ func (c *Client) send(req PushRequest) error {
 	}
 	defer resp.Body.Close()
 
-	// 检查响应状态码
-	// Loki在成功接收日志时返回204 (NoContent)
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}

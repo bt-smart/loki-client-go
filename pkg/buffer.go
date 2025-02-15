@@ -15,6 +15,9 @@ type LogEntry struct {
 	// Message 存储实际的日志内容
 	// 可以是任意字符串消息
 	Message string
+
+	// Level 日志级别
+	Level LogLevel
 }
 
 // Buffer 实现了一个线程安全的日志缓冲区

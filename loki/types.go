@@ -1,5 +1,7 @@
 package loki
 
+import "github.com/bt-smart/loki-client-go/pkg"
+
 // Stream 表示一个日志流
 // 包含流的标签信息和具体的日志内容
 type Stream struct {
@@ -19,14 +21,16 @@ type PushRequest struct {
 
 // ClientConfig 定义Loki客户端的配置参数
 type ClientConfig struct {
-	// URL 是Loki服务器的地址，例如 "http://localhost:3100"
-	URL string // Loki服务器地址
-	// Labels 定义默认的标签集，所有日志都会带上这些标签
-	Labels map[string]string // 默认标签
-	// BatchSize 定义批量发送的日志数量，达到这个数量就会触发发送
-	BatchSize int // 批量发送的大小，默认100
+	// URL 是Loki服务器的地址
+	URL string
+	// Labels 定义默认的标签集
+	Labels map[string]string
+	// BatchSize 定义批量发送的日志数量
+	BatchSize int
 	// MinWaitTime 定义两次发送之间的最小等待时间（秒）
-	MinWaitTime int64 // 最小等待时间(秒)，默认1
+	MinWaitTime int64
 	// MaxWaitTime 定义强制发送的最大等待时间（秒）
-	MaxWaitTime int64 // 最大等待时间(秒)，默认10
+	MaxWaitTime int64
+	// MinLevel 定义最低日志级别，低于此级别的日志将被忽略
+	MinLevel pkg.LogLevel
 }
