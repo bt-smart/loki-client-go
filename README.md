@@ -1,3 +1,5 @@
+# 废弃仓库
+
 # loki-client-go
 loki go客户端
 
